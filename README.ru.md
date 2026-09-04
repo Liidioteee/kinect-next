@@ -6,9 +6,10 @@
 
 > 🇬🇧 English version: [README.md](README.md) · история изменений: [CHANGELOG.md](CHANGELOG.md)
 >
-> **Начиная с 2.0:** `import kinect_next` больше не требует Kinect SDK и работает на любой ОС —
-> `Kinect20.dll` загружается лениво при первом `KinectSensor.open()`. `AsyncKinectSensor`
-> и `COMOperationError` доступны из корня пакета. Добавлен флаг `KinectSensor(..., reuse_buffers=True)`.
+> **Начиная с 2.0:** `import kinect_next` больше не требует установленного Kinect SDK
+> (`Kinect20.dll` грузится лениво при первом `KinectSensor.open()`) — удобно для CI и юнит-тестов;
+> сам Kinect v2 по-прежнему только под Windows. `AsyncKinectSensor` и `COMOperationError`
+> доступны из корня пакета. Добавлен флаг `KinectSensor(..., reuse_buffers=True)`.
 
 ---
 

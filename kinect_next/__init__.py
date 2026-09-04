@@ -1,8 +1,8 @@
 """kinect-next -- a modern, fast, strictly-typed library for Microsoft Kinect v2.
 
-Importing this package is side-effect free and works on any platform; the Kinect
-SDK runtime (``Kinect20.dll``) is only required once you call
-:meth:`KinectSensor.open`.
+Kinect v2 is a Windows-only device. Importing this package is side-effect free
+and does not require the Kinect for Windows SDK to be installed -- the runtime
+(``Kinect20.dll``) is loaded lazily on the first :meth:`KinectSensor.open`.
 """
 
 from __future__ import annotations

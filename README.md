@@ -31,8 +31,10 @@ architectural issues, memory leaks and incompatibilities with modern Python.
 * 🧩 **Fully typed (PEP 561 / `py.typed`)** — passes `mypy --strict`.
 * ⚡ **asyncio support** — `AsyncKinectSensor` async context manager and
   `async for` frame/audio generators.
-* 📦 **Importable anywhere** — `import kinect_next` has no side effects and works
-  on any OS; the Kinect SDK runtime is only needed once you open the sensor.
+* 📦 **No SDK needed to import** — `import kinect_next` has no side effects;
+  `Kinect20.dll` is loaded lazily on the first `KinectSensor.open()`, so the
+  package installs and imports on Windows even without the SDK or a sensor
+  (handy for CI and unit tests). Kinect v2 itself is Windows-only.
 
 ---
 
@@ -40,7 +42,7 @@ architectural issues, memory leaks and incompatibilities with modern Python.
 
 | | |
 |---|---|
-| **OS** | Windows 10 / 11 (64-bit) *(to talk to the hardware)* |
+| **OS** | Windows 10 / 11 (64-bit) — Kinect v2 is Windows-only |
 | **Hardware** | Kinect v2 sensor + power adapter, on a **USB 3.0** port |
 | **Driver** | [Kinect for Windows SDK 2.0](https://www.microsoft.com/en-us/download/details.aspx?id=44561) |
 | **Python** | 3.10, 3.11, 3.12, 3.13 |

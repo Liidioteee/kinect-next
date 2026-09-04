@@ -31,11 +31,12 @@ relative to the unreleased `1.x` line, hence the major version bump.
 
 ### Changed
 
-- **BREAKING:** `import kinect_next` no longer fails on machines without the
-  Kinect for Windows SDK. `Kinect20.dll` is now loaded lazily on the first
-  `KinectSensor.open()`; a missing DLL raises `KinectNotAvailableError` at that
-  point instead of at import time. This makes the package installable and
-  importable anywhere (CI, docs builders, Linux dev boxes).
+- **BREAKING:** `import kinect_next` no longer fails on a Windows machine that
+  does not have the Kinect for Windows SDK installed. `Kinect20.dll` is now
+  loaded lazily on the first `KinectSensor.open()`; a missing DLL raises
+  `KinectNotAvailableError` at that point instead of at import time. This makes
+  the package installable and importable for CI and unit tests without the SDK
+  or a sensor. (Kinect v2 remains Windows-only.)
 - **BREAKING:** `Joint.to_depth_space()` / `Joint.to_color_space()` now accept a
   `CoordinateMapper` (previously typed as `Any`).
 - All docstrings, comments and identifiers translated to English.

@@ -2,8 +2,8 @@
 
 Importing this module never touches the Kinect runtime. ``Kinect20.dll`` is
 resolved on first use (see :func:`get_default_kinect_sensor`) so that
-``import kinect_next`` works on any machine, including CI runners and Linux
-development boxes without the Kinect for Windows SDK installed.
+``import kinect_next`` works on a Windows box without the Kinect for Windows SDK
+installed -- useful for CI and unit tests.
 """
 
 from __future__ import annotations
