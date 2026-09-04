@@ -1,0 +1,8 @@
+# Runtime dependencies are declared in pyproject.toml.
+#
+#   pip install -e ".[dev]"     # editable install with all dev/optional extras
+#   pip install kinect-next      # runtime only
+#
+# This file is kept only for tools that still expect it.
+numpy>=1.23.0
+typing_extensions>=4.5.0

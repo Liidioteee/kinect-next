@@ -1,0 +1,14 @@
+include LICENSE
+include README.md
+include README.ru.md
+include CHANGELOG.md
+include pyproject.toml
+recursive-include kinect_next py.typed
+recursive-include kinect_next *.pyi
+
+recursive-exclude tests *
+recursive-exclude examples *
+exclude dev.md
+exclude guide.md
+exclude requirements.txt
+global-exclude __pycache__ *.py[cod] *.so *.pyd

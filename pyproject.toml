@@ -1,0 +1,143 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kinect-next"
+dynamic = ["version"]
+description = "Modern, high-performance, strictly-typed Python library for Microsoft Kinect v2 (audio & video)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Liidioteee", email = "sofronovdenis2009@gmail.com" },
+]
+maintainers = [
+    { name = "Liidioteee", email = "sofronovdenis2009@gmail.com" },
+]
+keywords = [
+    "kinect",
+    "kinect2",
+    "kinect-v2",
+    "microphone-array",
+    "beamforming",
+    "sound-source-localization",
+    "computer-vision",
+    "depth-camera",
+    "skeleton-tracking",
+    "point-cloud",
+    "opencv",
+    "open3d",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Graphics",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.23.0",
+    "typing_extensions>=4.5.0",
+]
+
+[project.optional-dependencies]
+viz = [
+    "opencv-python>=4.6.0",
+    "open3d>=0.17.0",
+]
+all = [
+    "opencv-python>=4.6.0",
+    "open3d>=0.17.0",
+]
+dev = [
+    "opencv-python>=4.6.0",
+    "open3d>=0.17.0",
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "mypy>=1.8",
+    "ruff>=0.4",
+    "build>=1.2",
+    "twine>=5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Liidioteee/kinect-next"
+Repository = "https://github.com/Liidioteee/kinect-next"
+Issues = "https://github.com/Liidioteee/kinect-next/issues"
+Changelog = "https://github.com/Liidioteee/kinect-next/blob/main/CHANGELOG.md"
+
+[tool.setuptools.dynamic]
+version = { attr = "kinect_next.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kinect_next*"]
+
+[tool.setuptools.package-data]
+kinect_next = ["py.typed"]
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+src = ["kinect_next", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "E701",   # compound statements: the JointCollection accessors are intentionally terse
+    "B904",   # allow raising without `from` inside broad COM error handling
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kinect_next"]
+
+[tool.mypy]
+# 3.12+: required to parse the NumPy 2.x type stubs. Runtime support starts at
+# 3.10 (enforced by ruff's target-version and the CI test matrix).
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_return_any = true
+show_error_codes = true
+files = ["kinect_next"]
+
+[[tool.mypy.overrides]]
+module = ["cv2.*", "open3d.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "hardware: tests that require a physically connected Kinect v2 sensor (deselected by default)",
+]
