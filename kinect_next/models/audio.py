@@ -38,9 +38,9 @@ class AudioBeamSubFrame:
     data: npt.NDArray[np.float32]  # shape (256,), values in [-1.0, 1.0]
     beam_angle: float  # azimuth in radians (approx. -0.87 .. +0.87 rad)
     beam_angle_confidence: float  # [0.0, 1.0]
-    mode: AudioBeamMode = AudioBeamMode.AUTOMATIC
+    mode: AudioBeamMode = AudioBeamMode.AUTOMATIC  # beam mode this sub-frame was captured in
     duration_ms: float = 16.0
-    relative_time_ns: int = 0
+    relative_time_ns: int = 0  # sensor clock, comparable with the video frames
     correlated_body_ids: tuple[int, ...] = ()
 
     @property
@@ -75,7 +75,14 @@ class AudioBeamSubFrame:
 
 @dataclass(slots=True)
 class AudioFrame:
-    """The sub-frames that accumulated during one video tick (usually 2-3, ~32-48 ms)."""
+    """Consecutive audio sub-frames captured since the previous read.
+
+    Audio is captured continuously in the background, so the frames returned by
+    successive ``wait_for_frames()`` / ``wait_for_audio_frame()`` calls join up
+    without gaps: concatenating their :attr:`data` yields the uninterrupted
+    16 kHz stream. A frame holds as many 16 ms sub-frames as arrived in between
+    (about four per video frame at 15 fps, two at 30 fps).
+    """
 
     subframes: list[AudioBeamSubFrame] = field(default_factory=list)
 

@@ -17,8 +17,13 @@ from kinect_next.models.infrared import InfraredFrame, LongExposureInfraredFrame
 class FrameSet:
     """A single point-in-time snapshot of every stream enabled on the sensor.
 
-    All frames in one ``FrameSet`` are hardware-synchronised. A field is ``None``
-    when its stream was not enabled or no data was ready for this tick.
+    The video frames in one ``FrameSet`` are hardware-synchronised (they belong
+    to the same sensor tick). :attr:`audio` holds everything the microphone array
+    captured since the previous ``FrameSet``. A field is ``None`` when its stream
+    was not enabled or no data was ready for this tick.
+
+    :attr:`relative_time_ns` is the sensor clock of this tick (the depth
+    timestamp when depth is enabled); each frame also carries its own.
     """
 
     color: ColorFrame | None = None

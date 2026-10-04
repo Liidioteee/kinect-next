@@ -27,7 +27,7 @@ class ColorFrame:
 
     data: npt.NDArray[np.uint8]  # shape (1080, 1920, 4)
     settings: ColorCameraSettings | None = None
-    relative_time_ns: int = 0
+    relative_time_ns: int = 0  # sensor clock at capture, in nanoseconds
 
     @property
     def width(self) -> int:

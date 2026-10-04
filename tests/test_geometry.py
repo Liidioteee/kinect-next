@@ -46,3 +46,25 @@ def test_quaternion_90deg_about_z() -> None:
 
 def test_vector4_tuple() -> None:
     assert Vector4(1.0, 2.0, 3.0, 4.0).as_tuple() == (1.0, 2.0, 3.0, 4.0)
+
+
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan")])
+def test_point2d_without_pixel_coordinates_raises_a_clear_error(bad: float) -> None:
+    """The mapper reports unprojectable points as +/-inf; rounding those must not
+    surface as a bare ``OverflowError``."""
+    point = Point2D(bad, 10.0)
+    assert not point.is_valid()
+    with pytest.raises(ValueError, match="could not be projected"):
+        point.as_int_tuple()
+
+
+def test_point2d_and_vector_tuples() -> None:
+    assert Point2D(1.5, 2.5).as_tuple() == (1.5, 2.5)
+    assert Vector3(1.0, 2.0, 3.0).as_tuple() == (1.0, 2.0, 3.0)
+    assert Quaternion(0.1, 0.2, 0.3, 0.4).as_tuple() == (0.1, 0.2, 0.3, 0.4)
+
+
+def test_quaternion_gimbal_lock_pitch_is_clamped() -> None:
+    s = math.sqrt(0.5)
+    _roll, pitch, _yaw = Quaternion(0.0, s, 0.0, s).to_euler_angles()
+    assert pitch == pytest.approx(math.pi / 2)

@@ -82,7 +82,7 @@ def to_open3d_point_cloud(pcd: PointCloudData) -> Any:
         import open3d as o3d
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise ImportError(
-            "open3d is required for this conversion. Install it with: pip install open3d"
+            'open3d is required for this conversion. Install it with: pip install "kinect-next[open3d]"'
         ) from exc
 
     cloud = o3d.geometry.PointCloud()

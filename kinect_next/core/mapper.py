@@ -49,8 +49,36 @@ class PointCloudData(NamedTuple):
     colors: npt.NDArray[np.float32] | None
 
 
+DepthInput = DepthFrame | npt.NDArray[np.uint16]
+"""A :class:`DepthFrame` or a raw ``(424, 512)`` ``uint16`` depth array."""
+
+
+def _depth_buffer(depth: DepthInput) -> npt.NDArray[np.uint16]:
+    """Validate ``depth`` and return a C-contiguous ``(424, 512)`` ``uint16`` array.
+
+    The native mapper reads exactly 512 x 424 ``uint16`` values straight from the
+    buffer address, so anything else would be misread (or read out of bounds).
+    Views with unusual strides (mirrored, sliced, ...) are copied.
+    """
+    data = depth.data if isinstance(depth, DepthFrame) else depth
+    if not isinstance(data, np.ndarray):
+        raise TypeError(f"Expected a DepthFrame or a NumPy array, got {type(data).__name__}.")
+    if data.shape != (_DEPTH_H, _DEPTH_W):
+        raise ValueError(f"Depth data must have shape ({_DEPTH_H}, {_DEPTH_W}), got {data.shape}.")
+    if data.dtype != np.uint16:
+        raise TypeError(
+            f"Depth data must be uint16 millimetres, got {data.dtype}. "
+            "Convert explicitly, e.g. depth.astype(np.uint16)."
+        )
+    return np.ascontiguousarray(data)
+
+
 class CoordinateMapper:
-    """Wrapper around the native ``ICoordinateMapper`` with NumPy batch helpers."""
+    """Wrapper around the native ``ICoordinateMapper`` with NumPy batch helpers.
+
+    The whole-frame methods accept either a :class:`DepthFrame` or a raw
+    ``(424, 512)`` ``uint16`` array.
+    """
 
     __slots__ = ("_native",)
 
@@ -83,41 +111,47 @@ class CoordinateMapper:
     # ------------------------------------------------------------------
     # Whole-frame (vectorised) projections
     # ------------------------------------------------------------------
-    def map_depth_frame_to_camera_space(self, depth_frame: DepthFrame) -> npt.NDArray[np.float32]:
+    def map_depth_frame_to_camera_space(self, depth_frame: DepthInput) -> npt.NDArray[np.float32]:
         """Project the whole depth frame into camera space.
 
-        Returns a ``(424, 512, 3)`` float32 array of ``(x, y, z)`` metres.
+        Returns a ``(424, 512, 3)`` float32 array of ``(x, y, z)`` metres. Pixels
+        without a valid depth map to ``-inf``.
         """
+        depth = _depth_buffer(depth_frame)
         camera_points = np.empty((_DEPTH_H, _DEPTH_W, 3), dtype=np.float32)
         self._native.map_depth_frame_to_camera_space(
             _DEPTH_COUNT,
-            depth_frame.data.ctypes.data_as(ctypes.c_void_p),
+            depth.ctypes.data_as(ctypes.c_void_p),
             camera_points.ctypes.data_as(ctypes.c_void_p),
         )
         return camera_points
 
-    def map_depth_frame_to_color_space(self, depth_frame: DepthFrame) -> npt.NDArray[np.float32]:
+    def map_depth_frame_to_color_space(self, depth_frame: DepthInput) -> npt.NDArray[np.float32]:
         """Find the colour-frame ``(x, y)`` for every depth pixel.
 
-        Returns a ``(424, 512, 2)`` float32 array.
+        Returns a ``(424, 512, 2)`` float32 array. Pixels without a valid depth
+        map to ``-inf``.
         """
+        depth = _depth_buffer(depth_frame)
         color_points = np.empty((_DEPTH_H, _DEPTH_W, 2), dtype=np.float32)
         self._native.map_depth_frame_to_color_space(
             _DEPTH_COUNT,
-            depth_frame.data.ctypes.data_as(ctypes.c_void_p),
+            depth.ctypes.data_as(ctypes.c_void_p),
             color_points.ctypes.data_as(ctypes.c_void_p),
         )
         return color_points
 
-    def map_color_frame_to_depth_space(self, depth_frame: DepthFrame) -> npt.NDArray[np.float32]:
+    def map_color_frame_to_depth_space(self, depth_frame: DepthInput) -> npt.NDArray[np.float32]:
         """Find the depth-frame ``(x, y)`` for every Full-HD colour pixel.
 
-        Returns a ``(1080, 1920, 2)`` float32 array.
+        Returns a ``(1080, 1920, 2)`` float32 array. Colour pixels with no depth
+        counterpart map to ``-inf``.
         """
+        depth = _depth_buffer(depth_frame)
         depth_points = np.empty((_COLOR_H, _COLOR_W, 2), dtype=np.float32)
         self._native.map_color_frame_to_depth_space(
             _DEPTH_COUNT,
-            depth_frame.data.ctypes.data_as(ctypes.c_void_p),
+            depth.ctypes.data_as(ctypes.c_void_p),
             _COLOR_COUNT,
             depth_points.ctypes.data_as(ctypes.c_void_p),
         )
@@ -128,8 +162,9 @@ class CoordinateMapper:
     # ------------------------------------------------------------------
     def generate_point_cloud(
         self,
-        depth_frame: DepthFrame,
+        depth_frame: DepthInput,
         color_frame: ColorFrame | None = None,
+        *,
         remove_invalid: bool = True,
     ) -> PointCloudData:
         """Generate a dense 3D point cloud, optionally textured with colour.
@@ -140,11 +175,14 @@ class CoordinateMapper:
             The depth frame to unproject.
         color_frame:
             Optional colour frame; when given, each point receives an RGB value.
+            Points the colour camera cannot see are coloured black.
         remove_invalid:
             Drop points with a non-finite or out-of-range depth
-            (``z`` outside ``[0.4, 8.0]`` m).
+            (``z`` outside ``[0.4, 8.0]`` m). When ``False`` all 217 088 points
+            are returned and pixels without depth are ``-inf``.
         """
-        flat_points = self.map_depth_frame_to_camera_space(depth_frame).reshape(-1, 3)
+        depth = _depth_buffer(depth_frame)
+        flat_points = self.map_depth_frame_to_camera_space(depth).reshape(-1, 3)
 
         valid_mask: npt.NDArray[np.bool_] | slice
         if remove_invalid:
@@ -157,12 +195,15 @@ class CoordinateMapper:
 
         valid_colors: npt.NDArray[np.float32] | None = None
         if color_frame is not None:
-            color_coords = self.map_depth_frame_to_color_space(depth_frame).reshape(-1, 2)
+            color_coords = self.map_depth_frame_to_color_space(depth).reshape(-1, 2)
             color_coords = color_coords[valid_mask]
 
-            cx = np.rint(color_coords[:, 0]).astype(np.intp)
-            cy = np.rint(color_coords[:, 1]).astype(np.intp)
-            in_bounds = (cx >= 0) & (cx < _COLOR_W) & (cy >= 0) & (cy < _COLOR_H)
+            # Unmappable pixels are -inf; resolve them before the integer cast.
+            mappable = np.isfinite(color_coords).all(axis=1)
+            pixels = np.zeros(color_coords.shape, dtype=np.intp)
+            pixels[mappable] = np.rint(color_coords[mappable])
+            cx, cy = pixels[:, 0], pixels[:, 1]
+            in_bounds = mappable & (cx >= 0) & (cx < _COLOR_W) & (cy >= 0) & (cy < _COLOR_H)
 
             rgb_img = color_frame.as_rgb()
             valid_colors = np.zeros((cx.shape[0], 3), dtype=np.float32)

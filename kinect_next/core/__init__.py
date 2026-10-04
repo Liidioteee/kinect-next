@@ -19,6 +19,7 @@ from kinect_next.core.enums import (
 from kinect_next.core.exceptions import (
     AudioStreamError,
     COMOperationError,
+    KinectClosedError,
     KinectError,
     KinectNotAvailableError,
     KinectTimeoutError,
@@ -42,6 +43,7 @@ __all__ = [
     "HandState",
     "JointType",
     "KinectAudioCalibrationState",
+    "KinectClosedError",
     "KinectError",
     "KinectNotAvailableError",
     "KinectSensor",

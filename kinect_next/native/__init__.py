@@ -1,6 +1,6 @@
 """Native COM interop layer (VTable dispatch, Win32 bindings, SDK structures)."""
 
-from kinect_next.native.com_base import COMBase
+from kinect_next.native.com_base import HRESULT, COMBase
 from kinect_next.native.interfaces import (
     IAudioBeam,
     IAudioBeamFrame,
@@ -8,6 +8,7 @@ from kinect_next.native.interfaces import (
     IAudioBeamFrameReader,
     IAudioBeamList,
     IAudioBeamSubFrame,
+    IAudioBodyCorrelation,
     IAudioSource,
     IBody,
     IBodyFrame,
@@ -41,6 +42,7 @@ from kinect_next.native.types import (
 )
 from kinect_next.native.win32 import (
     INFINITE,
+    WAIT_FAILED,
     WAIT_OBJECT_0,
     WAIT_TIMEOUT,
     close_handle,
@@ -53,7 +55,9 @@ from kinect_next.native.win32 import (
 )
 
 __all__ = [
+    "HRESULT",
     "INFINITE",
+    "WAIT_FAILED",
     "WAIT_OBJECT_0",
     "WAIT_TIMEOUT",
     "COMBase",
@@ -67,6 +71,7 @@ __all__ = [
     "IAudioBeamFrameReader",
     "IAudioBeamList",
     "IAudioBeamSubFrame",
+    "IAudioBodyCorrelation",
     "IAudioSource",
     "IBody",
     "IBodyFrame",

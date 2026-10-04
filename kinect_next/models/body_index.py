@@ -18,7 +18,7 @@ class BodyIndexFrame:
     """A 512 x 424 segmentation mask: ``0..5`` is a tracked body index, ``255`` is background."""
 
     data: npt.NDArray[np.uint8]  # shape (424, 512)
-    relative_time_ns: int = 0
+    relative_time_ns: int = 0  # sensor clock at capture, in nanoseconds
 
     @property
     def width(self) -> int:

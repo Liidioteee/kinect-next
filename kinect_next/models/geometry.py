@@ -18,7 +18,17 @@ class Point2D:
         return self.x, self.y
 
     def as_int_tuple(self) -> tuple[int, int]:
-        """Return ``(x, y)`` rounded to the nearest integers (pixel coordinates)."""
+        """Return ``(x, y)`` rounded to the nearest integers (pixel coordinates).
+
+        Raises
+        ------
+        ValueError
+            If a coordinate is NaN or infinite, which is how the coordinate
+            mapper reports a point that cannot be projected. Check
+            :meth:`is_valid` first.
+        """
+        if not self.is_valid():
+            raise ValueError(f"{self!r} has no pixel coordinates (the point could not be projected).")
         return round(self.x), round(self.y)
 
     def is_valid(self) -> bool:

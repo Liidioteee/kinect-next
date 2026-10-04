@@ -1,0 +1,226 @@
+{
+  "IAudioBeam": [
+    "get_AudioSource",
+    "get_AudioBeamMode",
+    "put_AudioBeamMode",
+    "get_BeamAngle",
+    "put_BeamAngle",
+    "get_BeamAngleConfidence",
+    "OpenInputStream",
+    "get_RelativeTime"
+  ],
+  "IAudioBeamFrame": [
+    "get_AudioSource",
+    "get_Duration",
+    "get_AudioBeam",
+    "get_SubFrameCount",
+    "GetSubFrame",
+    "get_RelativeTimeStart"
+  ],
+  "IAudioBeamFrameList": [
+    "get_BeamCount",
+    "OpenAudioBeamFrame"
+  ],
+  "IAudioBeamFrameReader": [
+    "SubscribeFrameArrived",
+    "UnsubscribeFrameArrived",
+    "GetFrameArrivedEventData",
+    "AcquireLatestBeamFrames",
+    "get_IsPaused",
+    "put_IsPaused",
+    "get_AudioSource"
+  ],
+  "IAudioBeamList": [
+    "get_BeamCount",
+    "OpenAudioBeam"
+  ],
+  "IAudioBeamSubFrame": [
+    "get_FrameLengthInBytes",
+    "get_Duration",
+    "get_BeamAngle",
+    "get_BeamAngleConfidence",
+    "get_AudioBeamMode",
+    "get_AudioBodyCorrelationCount",
+    "GetAudioBodyCorrelation",
+    "CopyFrameDataToArray",
+    "AccessUnderlyingBuffer",
+    "get_RelativeTime"
+  ],
+  "IAudioBodyCorrelation": [
+    "get_BodyTrackingId"
+  ],
+  "IAudioSource": [
+    "SubscribeFrameCaptured",
+    "UnsubscribeFrameCaptured",
+    "GetFrameCapturedEventData",
+    "get_KinectSensor",
+    "get_IsActive",
+    "get_SubFrameLengthInBytes",
+    "get_SubFrameDuration",
+    "get_MaxSubFrameCount",
+    "OpenReader",
+    "get_AudioBeams",
+    "get_AudioCalibrationState"
+  ],
+  "IBody": [
+    "GetJoints",
+    "GetJointOrientations",
+    "get_Engaged",
+    "GetExpressionDetectionResults",
+    "GetActivityDetectionResults",
+    "GetAppearanceDetectionResults",
+    "get_HandLeftState",
+    "get_HandLeftConfidence",
+    "get_HandRightState",
+    "get_HandRightConfidence",
+    "get_ClippedEdges",
+    "get_TrackingId",
+    "get_IsTracked",
+    "get_IsRestricted",
+    "get_Lean",
+    "get_LeanTrackingState"
+  ],
+  "IBodyFrame": [
+    "GetAndRefreshBodyData",
+    "get_FloorClipPlane",
+    "get_RelativeTime",
+    "get_BodyFrameSource"
+  ],
+  "IBodyFrameReference": [
+    "AcquireFrame",
+    "get_RelativeTime"
+  ],
+  "IBodyIndexFrame": [
+    "CopyFrameDataToArray",
+    "AccessUnderlyingBuffer",
+    "get_FrameDescription",
+    "get_RelativeTime",
+    "get_BodyIndexFrameSource"
+  ],
+  "IBodyIndexFrameReference": [
+    "AcquireFrame",
+    "get_RelativeTime"
+  ],
+  "IColorCameraSettings": [
+    "get_ExposureTime",
+    "get_FrameInterval",
+    "get_Gain",
+    "get_Gamma"
+  ],
+  "IColorFrame": [
+    "get_RawColorImageFormat",
+    "get_FrameDescription",
+    "CopyRawFrameDataToArray",
+    "AccessRawUnderlyingBuffer",
+    "CopyConvertedFrameDataToArray",
+    "CreateFrameDescription",
+    "get_ColorCameraSettings",
+    "get_RelativeTime",
+    "get_ColorFrameSource"
+  ],
+  "IColorFrameReference": [
+    "AcquireFrame",
+    "get_RelativeTime"
+  ],
+  "ICoordinateMapper": [
+    "SubscribeCoordinateMappingChanged",
+    "UnsubscribeCoordinateMappingChanged",
+    "GetCoordinateMappingChangedEventData",
+    "MapCameraPointToDepthSpace",
+    "MapCameraPointToColorSpace",
+    "MapDepthPointToCameraSpace",
+    "MapDepthPointToColorSpace",
+    "MapCameraPointsToDepthSpace",
+    "MapCameraPointsToColorSpace",
+    "MapDepthPointsToCameraSpace",
+    "MapDepthPointsToColorSpace",
+    "MapDepthFrameToCameraSpace",
+    "MapDepthFrameToColorSpace",
+    "MapColorFrameToDepthSpace",
+    "MapColorFrameToCameraSpace",
+    "GetDepthFrameToCameraSpaceTable",
+    "GetDepthCameraIntrinsics"
+  ],
+  "IDepthFrame": [
+    "CopyFrameDataToArray",
+    "AccessUnderlyingBuffer",
+    "get_FrameDescription",
+    "get_RelativeTime",
+    "get_DepthFrameSource",
+    "get_DepthMinReliableDistance",
+    "get_DepthMaxReliableDistance"
+  ],
+  "IDepthFrameReference": [
+    "AcquireFrame",
+    "get_RelativeTime"
+  ],
+  "IFrameDescription": [
+    "get_Width",
+    "get_Height",
+    "get_HorizontalFieldOfView",
+    "get_VerticalFieldOfView",
+    "get_DiagonalFieldOfView",
+    "get_LengthInPixels",
+    "get_BytesPerPixel"
+  ],
+  "IInfraredFrame": [
+    "CopyFrameDataToArray",
+    "AccessUnderlyingBuffer",
+    "get_FrameDescription",
+    "get_RelativeTime",
+    "get_InfraredFrameSource"
+  ],
+  "IInfraredFrameReference": [
+    "AcquireFrame",
+    "get_RelativeTime"
+  ],
+  "IKinectSensor": [
+    "SubscribeIsAvailableChanged",
+    "UnsubscribeIsAvailableChanged",
+    "GetIsAvailableChangedEventData",
+    "Open",
+    "Close",
+    "get_IsOpen",
+    "get_IsAvailable",
+    "get_ColorFrameSource",
+    "get_DepthFrameSource",
+    "get_BodyFrameSource",
+    "get_BodyIndexFrameSource",
+    "get_InfraredFrameSource",
+    "get_LongExposureInfraredFrameSource",
+    "get_AudioSource",
+    "OpenMultiSourceFrameReader",
+    "get_CoordinateMapper",
+    "get_UniqueKinectId",
+    "get_KinectCapabilities"
+  ],
+  "ILongExposureInfraredFrame": [
+    "CopyFrameDataToArray",
+    "AccessUnderlyingBuffer",
+    "get_FrameDescription",
+    "get_RelativeTime",
+    "get_LongExposureInfraredFrameSource"
+  ],
+  "ILongExposureInfraredFrameReference": [
+    "AcquireFrame",
+    "get_RelativeTime"
+  ],
+  "IMultiSourceFrame": [
+    "get_ColorFrameReference",
+    "get_DepthFrameReference",
+    "get_BodyFrameReference",
+    "get_BodyIndexFrameReference",
+    "get_InfraredFrameReference",
+    "get_LongExposureInfraredFrameReference"
+  ],
+  "IMultiSourceFrameReader": [
+    "SubscribeMultiSourceFrameArrived",
+    "UnsubscribeMultiSourceFrameArrived",
+    "GetMultiSourceFrameArrivedEventData",
+    "AcquireLatestFrame",
+    "get_FrameSourceTypes",
+    "get_IsPaused",
+    "put_IsPaused",
+    "get_KinectSensor"
+  ]
+}

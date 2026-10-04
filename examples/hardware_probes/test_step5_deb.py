@@ -1,4 +1,9 @@
-"""Автоматический VTable-сканер для IAudioBeamSubFrame."""
+"""Автоматический VTable-сканер для IAudioBeamSubFrame.
+
+Исторический отладочный скрипт: перебирает слоты «вслепую». Раскладка VTable
+теперь берётся из заголовка SDK (``Kinect.h``) и проверяется тестом
+``tests/test_vtable_layout.py`` — пользуйтесь им, а не перебором.
+"""
 
 import ctypes
 from ctypes import HRESULT, POINTER, byref, c_float, c_int, c_longlong, c_uint, c_void_p
@@ -31,7 +36,7 @@ audio_frame = frame_list.open_audio_beam_frame(0)
 subframe = audio_frame.get_sub_frame(0)
 subframe_ptr = subframe.ptr
 
-print(f" -> Указатель на IAudioBeamSubFrame: 0x{subframe_ptr.value:X}")
+print(f" -> Указатель на IAudioBeamSubFrame: 0x{subframe_ptr:X}")
 
 # Извлекаем VTable
 vtable = ctypes.cast(subframe_ptr, POINTER(POINTER(c_void_p))).contents
@@ -124,4 +129,4 @@ for idx in range(3, 14):
 
 print("-" * 65)
 
-pr
+print("Сканирование завершено.")

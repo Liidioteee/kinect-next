@@ -35,11 +35,12 @@
 
 ## ✨ Ключевые преимущества
 
-* 🎙 **4-микрофонная решетка и Beamforming**: аппаратная локализация источника звука (SSL), отслеживание азимута речи ($-50^\circ .. +50^\circ$), захват 16 kHz Float32/Int16 PCM и привязка луча к 3D-суставам человека (`track_body`).
+* 🎙 **4-микрофонная решетка и Beamforming**: аппаратная локализация источника звука (SSL), отслеживание азимута речи ($-50^\circ .. +50^\circ$), **непрерывный (без пропусков)** захват 16 kHz Float32/Int16 PCM в фоновом потоке; там, где это поддерживает рантайм Kinect, — ручное наведение луча и привязка к 3D-суставам человека (`track_body`).
 * 🎯 **Audio-Visual Fusion**: встроенный полярный радар звука и автоматическая подсветка говорящего человека в OpenCV (`draw_audio_visual_overlay`).
-* 🏎 **Максимальная производительность (Zero-Copy)**: преобразование кадров в массивы NumPy (`BGRA`, `BGR`, `RGB`, `uint16`, `float32`) без лишнего дублирования памяти.
+* 🏎 **Экономная работа с кадрами**: каждый кадр копируется ровно один раз — из драйвера сразу в массив NumPy; `BGR` / `RGB` — это представления (views) того же массива, а режим `reuse_buffers` убирает выделения памяти на каждом кадре.
+* 💤 **Событийный и потокобезопасный захват**: ожидания блокируются на событиях SDK (≈0 % CPU в простое), `close()` можно вызывать из любого потока, а отмена `asyncio`-задачи действительно прерывает ожидание.
 * 🔒 **Zero Memory Leaks (RAII)**: автоматическое и строгое управление временем жизни COM-указателей (`IUnknown::Release`).
-* ⏱ **Аппаратная синхронизация (MultiSourceFrameReader)**: кадры цвета, глубины, скелета, ИК-камеры и аудио поступают в едином синхронизированном объекте `FrameSet`.
+* ⏱ **Аппаратная синхронизация (MultiSourceFrameReader)**: кадры цвета, глубины, скелета, ИК-камеры и маски одного такта сенсора поступают в едином объекте `FrameSet` с метками времени сенсора — вместе со всем звуком, записанным с предыдущего `FrameSet`.
 * ☁️ **Векторизованный 3D Point Cloud Engine**: генерация сотен тысяч 3D-точек с цветной текстурой за доли миллисекунды прямо в C-драйвере без блокировки Python GIL.
 * 🎯 **100% строгая типизация (PEP 561 / `py.typed`)**: полная поддержка подсказок типов для IDE (VSCode, PyCharm) и анализаторов (`mypy --strict`).
 * ⚡ **Поддержка `asyncio`**: нативный асинхронный контекстный менеджер и генератор кадров `AsyncKinectSensor`.
@@ -75,8 +76,10 @@
 ### Установка:
 
 ```bash
-pip install kinect-next            # ядро библиотеки
-pip install "kinect-next[viz]"     # + OpenCV / Open3D для утилит визуализации
+pip install kinect-next              # ядро библиотеки
+pip install "kinect-next[viz]"       # + OpenCV для утилит визуализации
+pip install "kinect-next[open3d]"    # + Open3D для конвертации облаков точек
+pip install "kinect-next[all]"       # всё сразу
 ```
 
 Из исходников:
@@ -110,7 +113,7 @@ with KinectSensor(streams=streams) as kinect:
         if not frameset.color:
             continue
 
-        # Zero-Copy получение кадра для OpenCV (1080, 1920, 3)
+        # BGR-представление кадра (1080, 1920, 3); копия нужна, чтобы рисовать поверх
         display = frameset.color.as_bgr().copy()
 
         # Отрисовка скелетов всех людей и жестов рук
@@ -131,16 +134,26 @@ cv2.destroyAllWindows()
 ### 2. Запись 16 kHz звука с микрофонной решетки и трекинг луча
 
 ```python
-from kinect_next import KinectSensor, StreamType
+from kinect_next import AudioFrame, KinectSensor, StreamType
+
+recording = AudioFrame()
 
 with KinectSensor(streams=StreamType.AUDIO) as kinect:
     for audio_frame in kinect.poll_audio():
         print(f"Азимут голоса: {audio_frame.beam_angle_deg:+4.1f}° | Громкость: {audio_frame.dbfs:.1f} dBFS")
 
-        # Сохранение пакета в файл WAV (16 kHz mono)
-        audio_frame.save_wav("speech_recording.wav", format_type="int16")
-        break
+        # Соседние кадры стыкуются без пропусков
+        recording.subframes += audio_frame.subframes
+        if recording.duration_ms >= 5000:
+            break
+
+# 5 секунд, 16 kHz mono
+recording.save_wav("speech_recording.wav", format_type="int16")
 ```
+
+Звук записывается непрерывно в фоновом потоке, поэтому ничего не теряется, пока ваш
+цикл занят: следующий `AudioFrame` просто содержит больше 16-миллисекундных
+субкадров. То же верно для `FrameSet.audio`, когда аудио включено вместе с видео.
 
 ---
 
@@ -255,17 +268,18 @@ cv2.destroyAllWindows()
 
 ### Объект `FrameSet`
 
-Контейнер одного аппаратно-синхронизированного снимка:
+Контейнер одного снимка всех включённых потоков. Видеокадры относятся к одному такту сенсора; `audio` содержит весь звук, записанный с предыдущего `FrameSet`:
 
 * `frameset.color` (`ColorFrame`): HD изображение 1920x1080 (методы `.as_bgr()`, `.as_rgb()`, `.as_bgra()`).
 * `frameset.depth` (`DepthFrame`): Карта глубин 512x424 в миллиметрах (методы `.distance_at(x, y)`, `.to_normalized_uint8()`).
-* `frameset.audio` (`AudioFrame`): Пакет аудио-субкадров (методы `.as_int16()`, `.save_wav()`, `.rms`, `.dbfs`).
+* `frameset.audio` (`AudioFrame`): Непрерывная последовательность аудио-субкадров (методы `.as_int16()`, `.save_wav()`, `.rms`, `.dbfs`, `.correlated_body_ids`).
 * `frameset.infrared` (`InfraredFrame`): 16-битный ИК-поток (метод `.to_uint8()`).
 * `frameset.long_exposure_infrared` (`LongExposureInfraredFrame`): ИК-поток с накоплением экспозиции.
 * `frameset.body_index` (`BodyIndexFrame`): Маска сегментации (0-5 ID человека, 255 фон).
 * `frameset.bodies` (`list[Body]`): Список из 6 моделей тел.
 * `frameset.tracked_bodies` (`list[Body]`): Список только активно отслеживаемых людей.
 * `frameset.floor_clip_plane` (`Vector4`): Вектор уравнения плоскости пола $Ax + By + Cz + D = 0$.
+* `frameset.relative_time_ns` (`int`): Время такта по часам сенсора; у каждого кадра и аудио-субкадра есть своя метка `relative_time_ns`.
 
 ### Модель `Body` и суставы
 
@@ -277,21 +291,57 @@ cv2.destroyAllWindows()
 
 ---
 
+## 🔊 Звук под нагрузкой
+
+Рантайм Kinect хранит только последние 1–3 аудио-субкадра (по 16 мс), поэтому
+kinect-next забирает их фоновым потоком сразу при появлении. По замерам на живом
+сенсоре звук идёт без пропусков, пока приложение простаивает, спит по полсекунды на
+кадр, строит облако точек или выполняет тяжёлые операции NumPy на каждом кадре.
+
+Потоку захвата всё же нужен GIL на мгновение при каждом чтении. Если другие потоки
+выполняют **ресурсоёмкий код на чистом Python** (плотные циклы, не отпускающие GIL),
+передача может прийти слишком поздно и субкадр будет пропущен — 1–7 % в стресс-тесте
+с 25 мс чистого Python на кадр. Такие пропуски не бывают тихими: они один раз
+пишутся в лог и считаются в `kinect.audio_subframes_lost` (`0` означает, что весь
+выданный звук непрерывен).
+
+Если ваше приложение такое, уменьшите интервал переключения интерпретатора один раз
+при старте — в том же стресс-тесте это свело потери к нулю:
+
+```python
+import sys
+sys.setswitchinterval(0.0005)   # по умолчанию 0.005 с
+```
+
+---
+
 ## 🎙 Управление акустическим лучом (`AudioController`)
 
 Контроллер доступен через свойство `kinect.audio`:
 
 ```python
-# 1. Автоматический режим (DSP сам следит за источником звука)
-kinect.audio.set_mode(AudioBeamMode.AUTOMATIC)
+audio = kinect.audio
+print(audio.mode, audio.beam_angle_deg, audio.beam_angle_confidence)
 
-# 2. Ручное наведение луча на угол (от -50° до +50°)
-kinect.audio.set_beam_angle(-20.0)
+if audio.supports_manual_steering:
+    # 1. Ручное наведение луча на угол (от -50° до +50°)
+    audio.set_beam_angle(-20.0)
 
-# 3. Фокусировка микрофона на конкретном человеке
-for body in frameset.tracked_bodies:
-    kinect.audio.track_body(body)
+    # 2. Фокусировка микрофона на конкретном человеке
+    for body in frameset.tracked_bodies:
+        audio.track_body(body)
+
+    # 3. Возврат в автоматический режим (DSP сам следит за источником звука)
+    audio.mode = AudioBeamMode.AUTOMATIC
 ```
+
+> **Ручное наведение зависит от рантайма Kinect.** Некоторые сочетания SDK и прошивки
+> принимают переключение в `MANUAL` и молча остаются в `AUTOMATIC` (официальный
+> управляемый API Microsoft ведёт себя на таких машинах так же). kinect-next проверяет
+> каждую смену режима: `set_beam_angle()`, `track_joint()`, `track_body()` и
+> `audio.mode = AudioBeamMode.MANUAL` бросают `AudioStreamError`, а не делают вид, что
+> сработали. В режиме `AUTOMATIC` угол луча, уверенность и
+> `AudioFrame.correlated_body_ids` доступны всегда.
 
 ---
 
@@ -314,6 +364,33 @@ point_color = joint.to_color_space(kinect.mapper)  # Point2D(x, y)
 cam_points = kinect.mapper.map_depth_frame_to_camera_space(frameset.depth) # (424, 512, 3) float32
 color_coords = kinect.mapper.map_depth_frame_to_color_space(frameset.depth) # (424, 512, 2) float32
 ```
+
+Покадровые методы принимают `DepthFrame` или «сырой» массив `(424, 512)` `uint16`.
+Представления с любыми шагами (зеркальные, срезы) обрабатываются корректно; неверная
+форма или dtype дают `ValueError` / `TypeError`, а не молча неправильный результат.
+Точка, которую нельзя спроецировать, возвращается как `-inf` — проверяйте
+`Point2D.is_valid()` перед `as_int_tuple()`.
+
+---
+
+## ⏳ Ожидание, таймауты и завершение
+
+```python
+frameset = kinect.wait_for_frames()              # таймаут по умолчанию: 5 с
+frameset = kinect.wait_for_frames(timeout_ms=0)  # опрос: KinectTimeoutError, если кадра нет
+```
+
+* **Запуск.** Только что открытому Kinect нужно 1–3 с до первых данных, и обычно он ещё
+  раз приостанавливает выдачу на пару секунд сразу после первых кадров. Таймаут 5 с
+  покрывает оба случая; `poll_frames()` / `poll_audio()` пропускают таймауты сами.
+* **Потокобезопасность.** Захваты сериализуются, поэтому `wait_for_frames()` можно
+  вызывать из нескольких потоков. `close()` можно вызывать из любого потока: идущие
+  ожидания получают `KinectClosedError`, а генераторы `poll_*` / `stream()` просто
+  завершаются.
+* **asyncio.** Отмена задачи, ожидающей `AsyncKinectSensor.wait_for_frames()`
+  (например, через `asyncio.wait_for`), прерывает и само ожидание.
+* **Несколько объектов.** Все `KinectSensor` в процессе делят одно физическое
+  устройство; оно закрывается, когда закрыт последний.
 
 ---
 

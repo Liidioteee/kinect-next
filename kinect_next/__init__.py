@@ -7,7 +7,7 @@ and does not require the Kinect for Windows SDK to be installed -- the runtime
 
 from __future__ import annotations
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 from kinect_next.aio import AsyncKinectSensor
 from kinect_next.core import (
@@ -25,6 +25,7 @@ from kinect_next.core import (
     HandState,
     JointType,
     KinectAudioCalibrationState,
+    KinectClosedError,
     KinectError,
     KinectNotAvailableError,
     KinectSensor,
@@ -94,6 +95,7 @@ __all__ = [
     "JointCollection",
     "JointType",
     "KinectAudioCalibrationState",
+    "KinectClosedError",
     "KinectError",
     "KinectNotAvailableError",
     "KinectSensor",

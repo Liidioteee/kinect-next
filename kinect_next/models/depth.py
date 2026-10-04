@@ -19,7 +19,7 @@ class DepthFrame:
     data: npt.NDArray[np.uint16]  # shape (424, 512)
     min_reliable_distance: int = 500  # 0.5 m
     max_reliable_distance: int = 4500  # 4.5 m
-    relative_time_ns: int = 0
+    relative_time_ns: int = 0  # sensor clock at capture, in nanoseconds
 
     @property
     def width(self) -> int:

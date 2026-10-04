@@ -15,17 +15,22 @@ architectural issues, memory leaks and incompatibilities with modern Python.
 ## Highlights
 
 * 🎙 **4-mic array & beamforming** — hardware sound-source localisation (SSL),
-  speech azimuth tracking (−50°…+50°), 16 kHz float32 / int16 PCM capture, and
-  locking the beam onto a person's 3D joints (`audio.track_body`).
+  speech azimuth tracking (−50°…+50°) and **gap-free** 16 kHz float32 / int16 PCM
+  capture on a background thread; where the runtime supports it, the beam can be
+  steered manually or locked onto a person's 3D joints (`audio.track_body`).
 * 🎯 **Audio-visual fusion** — a built-in polar sound radar and automatic
   highlighting of the speaking person in OpenCV (`draw_audio_visual_overlay`).
-* 🏎 **Zero-copy frames** — NumPy views over the native driver buffers
-  (`BGRA`, `BGR`, `RGB`, `uint16`, `float32`) with no redundant copies, plus an
-  opt-in buffer-reuse mode for allocation-free real-time loops.
+* 🏎 **Lean frame handling** — each frame is copied exactly once, straight from
+  the driver into a NumPy array; `BGR` / `RGB` are views of that array, and an
+  opt-in buffer-reuse mode removes per-frame allocations in real-time loops.
+* 💤 **Event-driven, thread-safe capture** — waits block on the SDK's
+  frame-arrived events (≈0 % CPU while idle), `close()` may be called from any
+  thread, and cancelling an `asyncio` task really aborts the wait.
 * 🔒 **Deterministic COM cleanup (RAII)** — every `IUnknown` pointer is released
   as soon as a frame is consumed, not whenever the GC gets around to it.
-* ⏱ **Hardware sync** — colour, depth, IR, skeleton, body-index and audio arrive
-  together in a single `FrameSet`.
+* ⏱ **Hardware sync** — colour, depth, IR, skeleton and body-index of one sensor
+  tick arrive together in a single `FrameSet`, timestamped on the sensor clock,
+  along with all the audio captured since the previous one.
 * ☁️ **Vectorised 3D point-cloud engine** — hundreds of thousands of coloured 3D
   points generated inside the native driver, off the Python GIL.
 * 🧩 **Fully typed (PEP 561 / `py.typed`)** — passes `mypy --strict`.
@@ -33,8 +38,9 @@ architectural issues, memory leaks and incompatibilities with modern Python.
   `async for` frame/audio generators.
 * 📦 **No SDK needed to import** — `import kinect_next` has no side effects;
   `Kinect20.dll` is loaded lazily on the first `KinectSensor.open()`, so the
-  package installs and imports on Windows even without the SDK or a sensor
-  (handy for CI and unit tests). Kinect v2 itself is Windows-only.
+  package installs and imports anywhere, even without the SDK or a sensor
+  (handy for CI, docs builds and unit tests). Opening a sensor is Windows-only
+  and raises `KinectNotAvailableError` elsewhere.
 
 ---
 
@@ -50,8 +56,10 @@ architectural issues, memory leaks and incompatibilities with modern Python.
 ## Installation
 
 ```bash
-pip install kinect-next            # core library
-pip install "kinect-next[viz]"     # + OpenCV / Open3D for the drawing helpers
+pip install kinect-next              # core library
+pip install "kinect-next[viz]"       # + OpenCV for the drawing helpers
+pip install "kinect-next[open3d]"    # + Open3D for point-cloud conversion
+pip install "kinect-next[all]"       # everything
 ```
 
 From source:
@@ -84,7 +92,7 @@ with KinectSensor(streams=streams) as kinect:
         if frames.color is None:
             continue
 
-        display = frames.color.as_bgr().copy()          # zero-copy (1080, 1920, 3)
+        display = frames.color.as_bgr().copy()          # BGR view -> own copy to draw on
         draw_all_skeletons(display, frames.bodies, kinect.mapper, target_space="color")
         draw_audio_visual_overlay(display, frames, kinect.mapper, target_space="color")
 
@@ -98,14 +106,23 @@ cv2.destroyAllWindows()
 ### 2. Record 16 kHz microphone-array audio and track the beam
 
 ```python
-from kinect_next import KinectSensor, StreamType
+from kinect_next import AudioFrame, KinectSensor, StreamType
+
+recording = AudioFrame()
 
 with KinectSensor(streams=StreamType.AUDIO) as kinect:
     for audio in kinect.poll_audio():
         print(f"voice azimuth: {audio.beam_angle_deg:+5.1f}°  loudness: {audio.dbfs:5.1f} dBFS")
-        audio.save_wav("speech.wav", format_type="int16")   # 16 kHz mono
-        break
+        recording.subframes += audio.subframes          # consecutive frames join up gap-free
+        if recording.duration_ms >= 5000:
+            break
+
+recording.save_wav("speech.wav", format_type="int16")   # 5 s, 16 kHz mono
 ```
+
+Audio is captured continuously on a background thread, so nothing is lost while
+your loop is busy: the next `AudioFrame` simply carries more 16 ms sub-frames. The
+same holds for `FrameSet.audio` when audio is enabled next to video streams.
 
 ### 3. Generate a 3D point cloud and view it in Open3D
 
@@ -208,8 +225,9 @@ kinect_next/
 
 ### `FrameSet`
 
-One hardware-synchronised snapshot. A field is `None` when its stream is disabled
-or has no data for the current tick.
+One snapshot of every enabled stream. The video frames belong to the same sensor
+tick; `audio` holds everything captured since the previous `FrameSet`. A field is
+`None` when its stream is disabled or has no data for the current tick.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -219,8 +237,9 @@ or has no data for the current tick.
 | `long_exposure_infrared` | `LongExposureInfraredFrame` | long-exposure IR |
 | `body_index` | `BodyIndexFrame` | segmentation mask (`0..5` person, `255` background) |
 | `bodies` / `tracked_bodies` | `list[Body]` | up to 6 skeletons |
-| `audio` | `AudioFrame` | `.as_int16()`, `.save_wav()`, `.rms`, `.dbfs` |
+| `audio` | `AudioFrame` | gap-free sub-frames; `.as_int16()`, `.save_wav()`, `.rms`, `.dbfs`, `.correlated_body_ids` |
 | `floor_clip_plane` | `Vector4` | floor plane `Ax + By + Cz + D = 0` |
+| `relative_time_ns` | `int` | sensor clock of this tick; every frame and audio sub-frame carries its own too |
 
 ### `Body`
 
@@ -230,17 +249,51 @@ or has no data for the current tick.
 
 ---
 
+## Audio under load
+
+The Kinect runtime only keeps the latest 1–3 audio sub-frames (16 ms each), so
+kinect-next fetches them on a background thread the moment they appear. Measured
+on a live sensor, audio stays gap-free while the application is idle, sleeps for
+half a second per frame, builds a point cloud or runs heavy NumPy work on every
+frame.
+
+The capture thread still needs the GIL for a moment on each read. If other
+threads run **CPU-bound pure-Python code** (tight loops that never release the
+GIL), the hand-over can come too late and a sub-frame is missed — 1–7 % in a
+stress test with 25 ms of pure-Python work per frame. Such gaps are never
+silent: they are logged once and counted in `kinect.audio_subframes_lost`
+(`0` means everything delivered so far is continuous).
+
+If your application is like that, shorten the interpreter's switch interval
+once at start-up; in the same stress test this brought the loss to zero:
+
+```python
+import sys
+sys.setswitchinterval(0.0005)   # default is 0.005 s
+```
+
 ## `AudioController` (`kinect.audio`)
 
 ```python
-from kinect_next import AudioBeamMode
+from kinect_next import AudioBeamMode, AudioStreamError
 
-kinect.audio.set_mode(AudioBeamMode.AUTOMATIC)   # DSP tracks the loudest source
-kinect.audio.set_beam_angle(-20.0)               # steer manually, −50°…+50°
+audio = kinect.audio
+print(audio.mode, audio.beam_angle_deg, audio.beam_angle_confidence)
 
-for body in frames.tracked_bodies:
-    kinect.audio.track_body(body)                 # aim at a person's head
+if audio.supports_manual_steering:
+    audio.set_beam_angle(-20.0)                   # steer manually, −50°…+50°
+    for body in frames.tracked_bodies:
+        audio.track_body(body)                    # aim at a person's head
+    audio.mode = AudioBeamMode.AUTOMATIC          # hand control back to the DSP
 ```
+
+> **Manual steering depends on the Kinect runtime.** Some SDK / firmware
+> combinations accept the switch to `MANUAL` and silently stay in `AUTOMATIC`
+> (Microsoft's own managed API behaves the same on such machines). kinect-next
+> verifies every mode change: `set_beam_angle()`, `track_joint()`, `track_body()`
+> and `audio.mode = AudioBeamMode.MANUAL` raise `AudioStreamError` instead of
+> pretending to work. In `AUTOMATIC` mode the beam angle, its confidence and
+> `AudioFrame.correlated_body_ids` are always available.
 
 ## `CoordinateMapper` (`kinect.mapper`)
 
@@ -254,6 +307,32 @@ p_color = joint.to_color_space(kinect.mapper)     # Point2D
 cam = kinect.mapper.map_depth_frame_to_camera_space(frames.depth)   # (424, 512, 3) f32
 col = kinect.mapper.map_depth_frame_to_color_space(frames.depth)    # (424, 512, 2) f32
 ```
+
+The whole-frame methods take a `DepthFrame` or a raw `(424, 512)` `uint16` array.
+Views with any strides (mirrored, sliced) are handled; a wrong shape or dtype
+raises `ValueError` / `TypeError` rather than being misread by the native code.
+A point that cannot be projected comes back as `-inf` — check `Point2D.is_valid()`
+before `as_int_tuple()`.
+
+## Waiting, timeouts and shutdown
+
+```python
+frames = kinect.wait_for_frames()            # default timeout: 5 s
+frames = kinect.wait_for_frames(timeout_ms=0)  # poll: KinectTimeoutError if nothing is ready
+```
+
+* **Start-up.** A freshly opened Kinect needs 1–3 s before data flows, and it
+  typically pauses delivery once more for a couple of seconds right after the
+  first frames. The 5 s default covers both; `poll_frames()` / `poll_audio()`
+  skip timeouts on their own.
+* **Thread safety.** Captures are serialised, so several threads may call
+  `wait_for_frames()`. `close()` can be called from any thread: waits in
+  progress raise `KinectClosedError` and the `poll_*` / `stream()` generators
+  just finish.
+* **asyncio.** Cancelling a task that awaits `AsyncKinectSensor.wait_for_frames()`
+  (e.g. via `asyncio.wait_for`) aborts the underlying wait as well.
+* **Several sensor objects.** All `KinectSensor` instances in a process share the
+  one physical device; it is closed when the last instance closes.
 
 ## Real-time loops: `reuse_buffers`
 
@@ -278,9 +357,20 @@ mypy kinect_next
 pytest
 ```
 
-The test suite runs without a sensor. See [dev.md](dev.md) / [guide.md](guide.md)
-for internal architecture notes, and [CHANGELOG.md](CHANGELOG.md) for release
-history.
+The default suite runs without a sensor: the capture logic is driven by fakes
+and the COM dispatcher by a real in-process VTable. With a Kinect v2 attached,
+add the integration tests:
+
+```bash
+pytest --run-hardware
+```
+
+The COM VTable layouts are pinned to the SDK header: `tests/data/kinect_vtables.json`
+is a snapshot of `Kinect.h` (regenerate it with `python tests/kinect_header.py`),
+and it is re-checked against the installed header whenever the SDK is present.
+
+See [dev.md](dev.md) / [guide.md](guide.md) for internal architecture notes, and
+[CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License
 

@@ -66,3 +66,72 @@ def test_creates_parent_directory(tmp_path) -> None:
     out = tmp_path / "a" / "b" / "cloud.ply"
     save_point_cloud_ply(out, PointCloudData(points=_POINTS, colors=None))
     assert out.is_file()
+
+
+def test_mismatched_colours_are_ignored(tmp_path) -> None:
+    out = tmp_path / "cloud.ply"
+    save_point_cloud_ply(out, PointCloudData(points=_POINTS, colors=np.ones((2, 3), dtype=np.float32)))
+    header = _read_header(out)
+    assert "property uchar red" not in header
+    assert "element vertex 3" in header
+
+
+def test_binary_ply_without_colors(tmp_path) -> None:
+    out = tmp_path / "cloud.ply"
+    save_point_cloud_ply(out, PointCloudData(points=_POINTS, colors=None), binary=True)
+    raw = out.read_bytes()
+    body = raw[raw.index(b"end_header\n") + len(b"end_header\n") :]
+    assert np.array_equal(np.frombuffer(body, dtype="<f4").reshape(-1, 3), _POINTS)
+
+
+def test_colours_are_clipped_to_the_byte_range(tmp_path) -> None:
+    out = tmp_path / "cloud.ply"
+    colors = np.array([[2.0, -1.0, 0.5]] * 3, dtype=np.float32)
+    save_point_cloud_ply(out, PointCloudData(points=_POINTS, colors=colors))
+    first_vertex = out.read_text().split("end_header\n")[1].splitlines()[0].split()
+    assert first_vertex[3:] == ["255", "0", "128"]
+
+
+def test_to_open3d_point_cloud_converts_points_and_colours(monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    from kinect_next import to_open3d_point_cloud
+
+    class _Cloud:
+        points = None
+        colors = None
+
+    fake_o3d = SimpleNamespace(
+        geometry=SimpleNamespace(PointCloud=_Cloud),
+        utility=SimpleNamespace(Vector3dVector=lambda arr: ("vec", arr)),
+    )
+    monkeypatch.setitem(sys.modules, "open3d", fake_o3d)
+
+    colors = np.full((3, 3), 0.5, dtype=np.float32)
+    cloud = to_open3d_point_cloud(PointCloudData(points=_POINTS, colors=colors))
+    assert cloud.points[0] == "vec" and cloud.points[1].dtype == np.float64
+    assert np.array_equal(cloud.points[1], _POINTS.astype(np.float64))
+    assert cloud.colors[1].dtype == np.float64
+
+    plain = to_open3d_point_cloud(PointCloudData(points=_POINTS, colors=None))
+    assert plain.colors is None
+
+
+def test_to_open3d_point_cloud_without_open3d(monkeypatch) -> None:
+    import builtins
+
+    import pytest
+
+    from kinect_next import to_open3d_point_cloud
+
+    real_import = builtins.__import__
+
+    def no_open3d(name, *args, **kwargs):
+        if name == "open3d":
+            raise ImportError("No module named 'open3d'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_open3d)
+    with pytest.raises(ImportError, match="open3d is required"):
+        to_open3d_point_cloud(PointCloudData(points=_POINTS, colors=None))

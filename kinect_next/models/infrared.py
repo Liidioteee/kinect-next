@@ -17,7 +17,7 @@ class InfraredFrame:
     """A 512 x 424 infrared frame with a 16-bit dynamic range (``uint16``)."""
 
     data: npt.NDArray[np.uint16]  # shape (424, 512)
-    relative_time_ns: int = 0
+    relative_time_ns: int = 0  # sensor clock at capture, in nanoseconds
 
     @property
     def width(self) -> int:

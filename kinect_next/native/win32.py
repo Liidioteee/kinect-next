@@ -9,18 +9,21 @@ installed -- useful for CI and unit tests.
 from __future__ import annotations
 
 import ctypes
-from ctypes import HRESULT, POINTER, c_bool, c_uint32, c_void_p, c_wchar_p
+from collections.abc import Sequence
+from ctypes import POINTER, c_bool, c_uint32, c_void_p, c_wchar_p
 from typing import Any, Final
 
 from kinect_next.core.exceptions import KinectNotAvailableError
+from kinect_next.native.com_base import HRESULT
 
 INFINITE: Final = 0xFFFFFFFF
 WAIT_OBJECT_0: Final = 0x00000000
 WAIT_TIMEOUT: Final = 0x00000102
 WAIT_FAILED: Final = 0xFFFFFFFF
 
-# ``windll`` only exists on Windows; guard the attribute access so that the
-# module still imports on other platforms (the DLL calls will simply raise).
+# ``WinDLL`` only exists on Windows; guard the attribute access so that the
+# module still imports on other platforms (see ``com_base`` for the ``HRESULT``
+# fallback). There, every entry point raises ``KinectNotAvailableError``.
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True) if hasattr(ctypes, "WinDLL") else None
 
 
@@ -51,12 +54,12 @@ else:  # pragma: no cover - non-Windows fallback
     _ResetEvent = _WaitForSingleObject = _WaitForMultipleObjects = _unavailable
 
 
-def create_event(manual_reset: bool = False, initial_state: bool = False) -> c_void_p:
+def create_event(manual_reset: bool = False, initial_state: bool = False) -> int:
     """Create an unnamed Win32 event object and return its handle."""
     handle = _CreateEventW(None, manual_reset, initial_state, None)
     if not handle:
         raise OSError(ctypes.get_last_error(), "Failed to create a Win32 event handle.")
-    return c_void_p(handle)
+    return int(handle)
 
 
 def close_handle(handle: c_void_p | int | None) -> None:
@@ -83,9 +86,13 @@ def wait_for_single_object(handle: c_void_p | int, timeout_ms: int = INFINITE) -
 
 
 def wait_for_multiple_objects(
-    handles: list[c_void_p], wait_all: bool = False, timeout_ms: int = INFINITE
+    handles: Sequence[c_void_p | int], wait_all: bool = False, timeout_ms: int = INFINITE
 ) -> int:
-    """Block until one/all of ``handles`` are signalled or ``timeout_ms`` elapses."""
+    """Block until one/all of ``handles`` are signalled or ``timeout_ms`` elapses.
+
+    Returns ``WAIT_OBJECT_0 + i`` for the first signalled handle ``i``,
+    ``WAIT_TIMEOUT`` or ``WAIT_FAILED``.
+    """
     count = len(handles)
     arr = (c_void_p * count)(*handles)
     return int(_WaitForMultipleObjects(count, arr, wait_all, timeout_ms))

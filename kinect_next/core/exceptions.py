@@ -19,6 +19,10 @@ class KinectTimeoutError(KinectError):
     """A frame did not arrive from the sensor within the requested timeout."""
 
 
+class KinectClosedError(KinectError):
+    """The sensor is closed, or was closed while a wait was in progress."""
+
+
 class StreamNotEnabledError(KinectError):
     """A stream was requested that was not enabled when the sensor was opened."""
 

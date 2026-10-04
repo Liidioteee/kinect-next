@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -34,8 +35,13 @@ def find_speaking_body(
     confidence: float,
     min_confidence: float = 0.3,
     tolerance_deg: float = 14.0,
+    correlated_body_ids: Iterable[int] = (),
 ) -> Body | None:
-    """Return the tracked body whose head azimuth best matches the audio beam.
+    """Return the tracked body that is most likely speaking.
+
+    A body the sensor's DSP has already correlated with the audio beam
+    (``AudioFrame.correlated_body_ids``) wins outright. Otherwise the tracked
+    body whose head azimuth best matches the beam angle is returned.
 
     Parameters
     ----------
@@ -46,10 +52,18 @@ def find_speaking_body(
     confidence:
         Beam-direction confidence in ``[0, 1]``.
     min_confidence:
-        Below this confidence the function returns ``None``.
+        Below this confidence the azimuth match is not attempted.
     tolerance_deg:
         Maximum allowed azimuth error, in degrees.
+    correlated_body_ids:
+        Tracking IDs reported by the sensor's audio-body correlation.
     """
+    correlated = set(correlated_body_ids)
+    if correlated:
+        for body in bodies:
+            if body.is_tracked and body.tracking_id in correlated:
+                return body
+
     if confidence < min_confidence or not bodies:
         return None
 
@@ -159,7 +173,12 @@ def draw_audio_visual_overlay(
 
     draw_audio_radar(image, beam_deg, beam_conf, audio.dbfs)
 
-    speaker = find_speaking_body(frameset.tracked_bodies, audio.beam_angle, beam_conf)
+    speaker = find_speaking_body(
+        frameset.tracked_bodies,
+        audio.beam_angle,
+        beam_conf,
+        correlated_body_ids=audio.correlated_body_ids,
+    )
     if speaker is None:
         return
 
@@ -168,6 +187,8 @@ def draw_audio_visual_overlay(
         if target_space == "color"
         else speaker.joints.head.to_depth_space(mapper)
     )
+    if not head_pt.is_valid():  # the head cannot be projected (out of view)
+        return
     hx, hy = head_pt.as_int_tuple()
     if not (0 <= hx < image.shape[1] and 0 <= hy < image.shape[0]):
         return

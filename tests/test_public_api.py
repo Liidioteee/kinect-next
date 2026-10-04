@@ -46,6 +46,8 @@ def test_key_symbols_present() -> None:
     )
 
     assert issubclass(COMOperationError, kinect_next.KinectError)
+    assert issubclass(kinect_next.KinectClosedError, kinect_next.KinectError)
+    assert hasattr(KinectSensor, "wait_for_audio_frame")
     assert hasattr(KinectSensor, "wait_for_frames")
     assert hasattr(AsyncKinectSensor, "stream")
     assert StreamType.COLOR in StreamType.ALL
@@ -63,3 +65,39 @@ def test_importing_does_not_load_the_kinect_dll() -> None:
     )
     proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_every_library_exception_derives_from_kinect_error() -> None:
+    from kinect_next.core import exceptions
+    from kinect_next.core._cancel import WaitCancelledError
+
+    errors = [
+        obj for obj in vars(exceptions).values() if isinstance(obj, type) and issubclass(obj, Exception)
+    ]
+    assert len(errors) >= 7
+    assert all(issubclass(err, kinect_next.KinectError) for err in [*errors, WaitCancelledError])
+
+
+def test_native_layer_exports_are_importable() -> None:
+    import kinect_next.native as native
+
+    for name in native.__all__:
+        assert hasattr(native, name), f"{name} listed in kinect_next.native.__all__ but missing"
+    assert len(native.__all__) == len(set(native.__all__))
+
+
+def test_default_timeout_covers_sensor_start_up() -> None:
+    """A cold sensor needs 1-3 s before its first frame; the default must exceed that."""
+    import inspect
+
+    from kinect_next import AsyncKinectSensor, KinectSensor
+    from kinect_next.core.sensor import DEFAULT_TIMEOUT_MS
+
+    assert DEFAULT_TIMEOUT_MS >= 3000
+    for cls, names in (
+        (KinectSensor, ("wait_for_frames", "wait_for_audio_frame", "poll_frames", "poll_audio")),
+        (AsyncKinectSensor, ("wait_for_frames", "wait_for_audio_frame", "stream", "audio_stream")),
+    ):
+        for name in names:
+            default = inspect.signature(getattr(cls, name)).parameters["timeout_ms"].default
+            assert default == DEFAULT_TIMEOUT_MS, f"{cls.__name__}.{name}"

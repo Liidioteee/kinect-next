@@ -3,10 +3,10 @@
 
 > **Назначение документа**: Данное руководство предназначено для текущих и будущих разработчиков библиотеки `kinect-next`. В нем описана внутренняя архитектура, правила управления памятью, низкоуровневые COM-механизмы, а также **матрица жестких взаимосвязей между файлами** (что и где нужно менять одновременно, чтобы не вызвать краш процесса).
 
-> ⚠️ **Актуальность**: документ описывает общую архитектуру. Точечные изменения версии
-> 2.0 (ленивая загрузка `Kinect20.dll`, кэш VTable-тонков в `COMBase`, детерминированное
-> освобождение COM в `wait_for_frames`, флаг `reuse_buffers`, англоязычные docstrings,
-> ленивый импорт OpenCV в `utils/`) перечислены в [CHANGELOG.md](CHANGELOG.md).
+> ⚠️ **Актуальность**: документ описывает общую архитектуру. Точечные изменения
+> (ленивая загрузка `Kinect20.dll`, VTable по именам методов, событийные ожидания,
+> фоновый поток аудио, потокобезопасное закрытие, флаг `reuse_buffers`) перечислены в
+> [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -27,17 +27,19 @@ kinect_next_project/
 │   ├── native/                 # [Layer 0: C/Win32/COM Interop] Нативный низкоуровневый слой
 │   │   ├── __init__.py         # Реэкспорт нативных структур и интерфейсов
 │   │   ├── types.py            # Точные C-структуры (ctypes.Structure): точки, суставы, матрицы
-│   │   ├── com_base.py         # Базовый класс COMBase (диспетчеризация VTable, RAII IUnknown::Release)
+│   │   ├── com_base.py         # Базовый класс COMBase (VTable по именам методов, RAII IUnknown::Release)
 │   │   ├── win32.py            # Win32 Kernel32 API (события, ожидания) + загрузка Kinect20.dll
 │   │   └── interfaces.py       # COM-интерфейсы Kinect SDK 2.0 (видео, маппер и аудиоподсистема)
 │   │
 │   ├── core/                   # [Layer 1: Runtime Engine] Движок захвата и математический аппарат
 │   │   ├── __init__.py         # Реэкспорт ядра (KinectSensor, CoordinateMapper, AudioController, Enums, Exceptions)
+│   │   ├── _audio_pump.py      # Фоновый поток непрерывного захвата звука (AudioPump) и разбор субкадров
+│   │   ├── _cancel.py          # Кооперативная отмена ожиданий (CancelToken) для asyncio-обёртки
 │   │   ├── audio.py            # Контроллер лучеформирования (AudioController: наведение, привязка к телу)
 │   │   ├── enums.py            # Строго типизированные IntEnum и IntFlag (JointType, HandState, AudioBeamMode)
 │   │   ├── exceptions.py       # Дерево кастомных исключений (KinectError, COMOperationError, AudioStreamError)
 │   │   ├── mapper.py           # Векторизованный CoordinateMapper (Point Cloud, 2D/3D трансформации)
-│   │   └── sensor.py           # Главный контроллер KinectSensor (MultiSource + Audio захват)
+│   │   └── sensor.py           # Главный контроллер KinectSensor (событийный захват, блокировки, жизненный цикл)
 │   │
 │   ├── models/                 # [Layer 2: Data Models] Высокоуровневые типизированные модели
 │   │   ├── __init__.py         # Реэкспорт всех структур данных
@@ -92,10 +94,13 @@ kinect_next_project/
 
 * **Файлы:**
   1. `kinect_next/native/types.py` (если методу нужны новые C-структуры или типы аргументов).
-  2. `kinect_next/native/interfaces.py` (добавление сигнатуры вызова через `_call_method(index, ...)`).
-  3. `kinect_next/core/mapper.py`, `kinect_next/core/sensor.py` или `kinect_next/core/audio.py` (верхнеуровневая обертка).
+  2. `kinect_next/native/interfaces.py` (метод-обёртка, вызывающий `self._call("ИмяМетодаSDK", argtypes, ...)` или помощники `_get_int` / `_get_float` / `_get_bool` / `_get_struct` / `_get_interface`).
+  3. `tests/test_interfaces.py` (строка в таблице `EXPECTED`: какой метод SDK оборачивает новый метод Python).
+  4. `kinect_next/core/mapper.py`, `kinect_next/core/sensor.py` или `kinect_next/core/audio.py` (верхнеуровневая обертка).
 * **Критическое правило:**
-  > Индекс метода в VTable **НЕЛЬЗЯ ПРИДУМЫВАТЬ САМОСТОЯТЕЛЬНО**. В COM первые 3 индекса (`0, 1, 2`) всегда занимает `IUnknown` (`QueryInterface`, `AddRef`, `Release`). Пользовательские методы начинаются строго с индекса `3` в порядке их объявления в официальном заголовочном файле `Kinect.h` из C++ SDK. Смещение индекса даже на 1 приведет к вызову чужого метода в C++ памяти и аварийному завершению процесса.
+  > Индексы VTable **не пишутся руками вообще**. Каждый класс интерфейса перечисляет в `_vtable_` имена *всех* методов интерфейса в порядке их объявления в `Kinect.h` (после трёх методов `IUnknown`); `COMBase` сам вычисляет слот по имени. Список берётся из заголовка SDK, а не подбирается перебором: смещение даже на 1 вызывает чужой метод с чужими аргументами — причём часто без видимой ошибки.
+  >
+  > Раскладки закреплены тестами: `tests/data/kinect_vtables.json` — снимок `Kinect.h` (обновляется командой `python tests/kinect_header.py`), `tests/test_vtable_layout.py` сверяет с ним каждый `_vtable_` (а при установленном SDK — снимок с самим заголовком), `tests/test_interfaces.py` вызывает каждый метод через настоящую VTable и проверяет, что он попал в нужный слот.
   >
 
 ---
@@ -107,8 +112,9 @@ kinect_next_project/
   2. `kinect_next/native/interfaces.py` (описать соответствующий `I...FrameReader` и `I...Frame`).
   3. `kinect_next/models/` (создать новый файл модели, например `audio.py`).
   4. `kinect_next/models/frameset.py` (добавить поле нового кадра в датакласс `FrameSet`).
-  5. `kinect_next/core/sensor.py` (в методе `wait_for_frames()` добавить блок извлечения нового кадра при наличии флага в `self._streams`).
-  6. Все файлы `__init__.py` (пробросить импорты наружу).
+  5. `kinect_next/core/sensor.py` (в методе `_read_frameset()` добавить блок извлечения нового кадра при наличии флага в `self._streams`).
+  6. `tests/fakes.py` и `tests/test_sensor.py` (фейк нового кадра и тест его чтения).
+  7. Все файлы `__init__.py` (пробросить импорты наружу).
 
 ---
 
@@ -138,15 +144,27 @@ kinect_next_project/
 
 * Класс `COMBase` в `kinect_next/native/com_base.py` принимает параметр `owned: bool = True`.
 * Если `owned=True`, при срабатывании `__del__` сборщик мусора Python вызывает нативный метод `IUnknown::Release()`.
+* `COMBase` — контекстный менеджер: `with ref.acquire_frame() as frame:` освобождает указатель при выходе из блока, не дожидаясь сборщика мусора. `release()` идемпотентен.
 * **Правило работы с массивами IBody:**
-  При вызове `b_frame.get_and_refresh_body_data(6, bodies_native)` драйвер Kinect возвращает 6 «сырых» указателей на `IBody`. При оборачивании их в Python-класс обязательно указывается `IBody(ptr, owned=True)`. Как только список тел внутри кадра освобождается, память каждого тела в C++ SDK корректно очищается.
+  `IBodyFrame.get_bodies(6)` вызывает `GetAndRefreshBodyData` и сразу оборачивает каждый ненулевой указатель во владеющий `IBody`. `KinectSensor._parse_bodies` освобождает их все в `finally`, даже если разбор одного из тел упал.
 
-### 3.2. Массивы NumPy и Zero-Copy
+### 3.1a. События, ожидания и потоки
+
+* **Событие нужно «перезаряжать».** `WAITABLE_HANDLE` от `Subscribe…FrameArrived` остаётся взведённым, пока не вызван `Get…FrameArrivedEventData` — это делают `reader.clear_frame_arrived(handle)`. Без этого `WaitFor…` возвращается мгновенно и цикл ожидания превращается в холостую прокрутку (100 % ядра).
+* **Видео:** `KinectSensor._next_multi_frame` ждёт на двух дескрипторах — событии кадра и внутреннем `_wake_event`. Второй взводят `close()` и отмена ожидания (`_interrupt()`), после чего ожидающий перепроверяет флаги и бросает `KinectClosedError` / `WaitCancelledError`.
+* **Аудио:** SDK отдаёт только *последний* аудиокадр (1–2 субкадра по 16 мс); ссылки на более старые протухают. Поэтому `core/_audio_pump.py` держит фоновый поток, который по каждому событию копирует субкадры в ограниченную очередь; `wait_for_frames()` и `wait_for_audio_frame()` только забирают накопленное.
+* **Аудио и GIL:** интерфейсы аудио-захвата помечены `_hold_gil_ = True` — их вызовы идут через `ctypes.PYFUNCTYPE` и не отпускают GIL (десятки микросекундных геттеров на кадр иначе означали бы десятки переочередей за GIL). Потоку всё равно нужен GIL после пробуждения; при плотной занятости GIL чужим Python-кодом субкадры могут теряться — это считается в `AudioPump.missed_subframes` / `KinectSensor.audio_subframes_lost`. Надёжное решение на будущее — читать PCM из `IAudioBeam::OpenInputStream`, который буферизует звук внутри SDK.
+* **Блокировка:** захват видео и жизненный цикл защищены `KinectSensor._lock` (RLock). `close()` сначала будит ожидающих, затем берёт блокировку и разбирает ресурсы.
+* **Запуск сенсора:** после `Open()` данные появляются через 1–3 с, а вскоре после первых кадров рантайм ещё раз приостанавливает выдачу на 1,5–3 с (проверено «сырыми» вызовами SDK). Отсюда `DEFAULT_TIMEOUT_MS = 5000`; тесты на железе сначала ждут ровного потока.
+
+### 3.2. Массивы NumPy: одно копирование и представления
 
 * При передаче массивов в C-функции используется прямой указатель: `array.ctypes.data_as(ctypes.c_void_p)`.
 * Буфер для цвета создается размером `(1080, 1920, 4)` формата `BGRA uint8`.
 * Метод `ColorFrame.as_bgr()` использует срез `self.data[:, :, :3]`. Это **strided view**, которое занимает 0 байт дополнительной памяти и выполняется мгновенно.
-* В аудио-субкадрах `IAudioBeamSubFrame.access_underlying_buffer()` (индекс 11) возвращает прямой Zero-Copy указатель на нативный C++ буфер 32-bit Float PCM.
+* Кадры копируются из драйвера один раз (`Copy…FrameDataToArray`) — массив принадлежит Python и остаётся валидным после освобождения COM-кадра.
+* `CoordinateMapper` передаёт в драйвер адрес буфера глубины, поэтому вход проверяется (`_depth_buffer`): форма `(424, 512)`, `uint16`, C-смежность (несмежные представления копируются).
+* В аудио-субкадрах `IAudioBeamSubFrame.access_underlying_buffer()` возвращает `(размер, адрес)` нативного буфера 32-bit Float PCM; он действителен только до освобождения субкадра.
 
 ### 3.3. Разница между прямым и обратным маппингом (Coordinate Mapping)
 
@@ -160,7 +178,14 @@ kinect_next_project/
 
 ## 4. Справочник точных индексов VTable COM-интерфейсов
 
-Ниже приведена полная карта индексов виртуальной таблицы методов (VTable) Kinect SDK 2.0:
+Источник истины — кортежи `_vtable_` в `kinect_next/native/interfaces.py`, сверенные с
+`Kinect.h` (см. сценарий А). Таблицы ниже — справка; аудио-таблицы сгенерированы из
+снимка заголовка `tests/data/kinect_vtables.json` и перечисляют **все** слоты подряд.
+
+> До версии с проверкой по заголовку шесть аудио-слотов были записаны со сдвигом
+> (`get_IsActive`, `IAudioBeam::get_RelativeTime`, `IAudioBeamFrame::get_AudioBeam` /
+> `get_RelativeTimeStart`, `IAudioBeamSubFrame::get_AudioBodyCorrelationCount` /
+> `GetAudioBodyCorrelation`) — их находили перебором, а не по заголовку.
 
 ### `IKinectSensor`
 
@@ -194,86 +219,126 @@ kinect_next_project/
 
 ### `IAudioSource`
 
-| Индекс | Метод                      | Сигнатура            | Описание                                              |
-| :----------- | :------------------------------ | :---------------------------- | :------------------------------------------------------------ |
-| `6`        | `get_IsActive`                | `(BOOLEAN*)`                | Активность аудио-источника            |
-| `8`        | `get_SubFrameLengthInBytes`   | `(UINT*)`                   | Размер субкадра (1024 байта)               |
-| `9`        | `get_SubFrameDuration`        | `(TIMESPAN*)`               | Длительность субкадра (160 000 = 16 мс) |
-| `10`       | `get_MaxSubFrameCountForRead` | `(UINT*)`                   | Макс. субкадров за чтение (8)            |
-| `11`       | `OpenReader`                  | `(IAudioBeamFrameReader**)` | Открытие аудио-ридера                      |
-| `12`       | `get_AudioBeams`              | `(IAudioBeamList**)`        | Доступ к лучам микрофона                 |
+| Индекс | Метод SDK | Обёртка в `interfaces.py` |
+| :--- | :--- | :--- |
+| `3` | `SubscribeFrameCaptured` | — |
+| `4` | `UnsubscribeFrameCaptured` | — |
+| `5` | `GetFrameCapturedEventData` | — |
+| `6` | `get_KinectSensor` | — |
+| `7` | `get_IsActive` | `get_is_active()` |
+| `8` | `get_SubFrameLengthInBytes` | `get_sub_frame_length_in_bytes()` |
+| `9` | `get_SubFrameDuration` | `get_sub_frame_duration()` |
+| `10` | `get_MaxSubFrameCount` | `get_max_sub_frame_count_for_read()` |
+| `11` | `OpenReader` | `open_reader()` |
+| `12` | `get_AudioBeams` | `get_audio_beams()` |
+| `13` | `get_AudioCalibrationState` | `get_audio_calibration_state()` |
 
 ---
 
 ### `IAudioBeamFrameReader`
 
-| Индекс | Метод                  | Сигнатура          | Описание                                                      |
-| :----------- | :-------------------------- | :-------------------------- | :-------------------------------------------------------------------- |
-| `3`        | `SubscribeFrameArrived`   | `(WAITABLE_HANDLE*)`      | Подписка на Win32 Event аудиокадра                |
-| `4`        | `UnsubscribeFrameArrived` | `(WAITABLE_HANDLE)`       | Отписка от Win32 Event                                       |
-| `6`        | `AcquireLatestBeamFrames` | `(IAudioBeamFrameList**)` | Захват последнего списка аудиокадров |
+| Индекс | Метод SDK | Обёртка в `interfaces.py` |
+| :--- | :--- | :--- |
+| `3` | `SubscribeFrameArrived` | `subscribe_frame_arrived()` |
+| `4` | `UnsubscribeFrameArrived` | `unsubscribe_frame_arrived()` |
+| `5` | `GetFrameArrivedEventData` | `clear_frame_arrived()` |
+| `6` | `AcquireLatestBeamFrames` | `acquire_latest_beam_frames()` |
+| `7` | `get_IsPaused` | — |
+| `8` | `put_IsPaused` | — |
+| `9` | `get_AudioSource` | — |
+
+---
+
+### `IAudioBeamFrameList`
+
+| Индекс | Метод SDK | Обёртка в `interfaces.py` |
+| :--- | :--- | :--- |
+| `3` | `get_BeamCount` | `get_count()` |
+| `4` | `OpenAudioBeamFrame` | `open_audio_beam_frame()` |
 
 ---
 
 ### `IAudioBeamFrame`
 
-| Индекс | Метод                | Сигнатура               | Описание                                             |
-| :----------- | :------------------------ | :------------------------------- | :----------------------------------------------------------- |
-| `3`        | `get_AudioBeam`         | `(IAudioBeam**)`               | Получение объекта аудиолуча         |
-| `4`        | `get_Duration`          | `(TIMESPAN*)`                  | Суммарная длительность кадра       |
-| `5`        | `get_RelativeTimeStart` | `(TIMESPAN*)`                  | Timestamp начала кадра                            |
-| `6`        | `get_SubFrameCount`     | `(UINT*)`                      | Количество субкадров в кадре (1–3) |
-| `7`        | `GetSubFrame`           | `(UINT, IAudioBeamSubFrame**)` | Извлечение субкадра по индексу    |
+| Индекс | Метод SDK | Обёртка в `interfaces.py` |
+| :--- | :--- | :--- |
+| `3` | `get_AudioSource` | — |
+| `4` | `get_Duration` | `get_duration()` |
+| `5` | `get_AudioBeam` | `get_audio_beam()` |
+| `6` | `get_SubFrameCount` | `get_sub_frame_count()` |
+| `7` | `GetSubFrame` | `get_sub_frame()` |
+| `8` | `get_RelativeTimeStart` | `get_relative_time_start()` |
 
 ---
 
 ### `IAudioBeamSubFrame`
 
-| Индекс | Метод                        | Сигнатура                  | Описание                                                       |
-| :----------- | :-------------------------------- | :---------------------------------- | :--------------------------------------------------------------------- |
-| `3`        | `get_FrameLengthInBytes`        | `(UINT*)`                         | Размер буфера (1024 байта)                            |
-| `4`        | `get_Duration`                  | `(TIMESPAN*)`                     | Длительность субкадра (16.0 мс)                  |
-| `5`        | `get_BeamAngle`                 | `(float*)`                        | Азимут луча в радианах ($-50^\circ .. +50^\circ$) |
-| `6`        | `get_BeamAngleConfidence`       | `(float*)`                        | Уверенность направления ($0.0 .. 1.0$)         |
-| `7`        | `get_AudioBodyCorrelationCount` | `(UINT*)`                         | Кол-во ассоциированных скелетов            |
-| `8`        | `GetAudioBodyCorrelation`       | `(UINT, IAudioBodyCorrelation**)` | Связка со скелетом (`tracking_id`)                   |
-| `10`       | `CopyFrameDataToArray`          | `(UINT, BYTE*)`                   | Копирование Float32 PCM сэмплов                      |
-| `11`       | `AccessUnderlyingBuffer`        | `(UINT*, BYTE**)`                 | Нативный Zero-Copy указатель                          |
-| `12`       | `get_RelativeTime`              | `(TIMESPAN*)`                     | Временная метка субкадра                         |
+| Индекс | Метод SDK | Обёртка в `interfaces.py` |
+| :--- | :--- | :--- |
+| `3` | `get_FrameLengthInBytes` | `get_frame_length_in_bytes()` |
+| `4` | `get_Duration` | `get_duration()` |
+| `5` | `get_BeamAngle` | `get_beam_angle()` |
+| `6` | `get_BeamAngleConfidence` | `get_beam_angle_confidence()` |
+| `7` | `get_AudioBeamMode` | `get_audio_beam_mode()` |
+| `8` | `get_AudioBodyCorrelationCount` | `get_audio_body_correlation_count()` |
+| `9` | `GetAudioBodyCorrelation` | `get_audio_body_correlation()` |
+| `10` | `CopyFrameDataToArray` | `copy_frame_data_to_array()` |
+| `11` | `AccessUnderlyingBuffer` | `access_underlying_buffer()` |
+| `12` | `get_RelativeTime` | `get_relative_time()` |
+
+---
+
+### `IAudioBodyCorrelation`
+
+| Индекс | Метод SDK | Обёртка в `interfaces.py` |
+| :--- | :--- | :--- |
+| `3` | `get_BodyTrackingId` | `get_body_tracking_id()` |
+
+---
+
+### `IAudioBeamList`
+
+| Индекс | Метод SDK | Обёртка в `interfaces.py` |
+| :--- | :--- | :--- |
+| `3` | `get_BeamCount` | `get_beam_count()` |
+| `4` | `OpenAudioBeam` | `open_audio_beam()` |
 
 ---
 
 ### `IAudioBeam`
 
-| Индекс | Метод                  | Сигнатура   | Описание                                       |
-| :----------- | :-------------------------- | :------------------- | :----------------------------------------------------- |
-| `3`        | `get_AudioSource`         | `(IAudioSource**)` | Источник аудио                            |
-| `4`        | `get_AudioBeamMode`       | `(AudioBeamMode*)` | Режим луча (AUTOMATIC / MANUAL)               |
-| `5`        | `put_AudioBeamMode`       | `(AudioBeamMode)`  | Установка режима луча               |
-| `6`        | `get_BeamAngle`           | `(float*)`         | Чтение угла луча в радианах     |
-| `7`        | `put_BeamAngle`           | `(float)`          | Ручная установка угла луча      |
-| `8`        | `get_BeamAngleConfidence` | `(float*)`         | Уверенность направления луча |
-| `9`        | `get_RelativeTime`        | `(TIMESPAN*)`      | Timestamp луча                                     |
+| Индекс | Метод SDK | Обёртка в `interfaces.py` |
+| :--- | :--- | :--- |
+| `3` | `get_AudioSource` | `get_audio_source()` |
+| `4` | `get_AudioBeamMode` | `get_audio_beam_mode()` |
+| `5` | `put_AudioBeamMode` | `put_audio_beam_mode()` |
+| `6` | `get_BeamAngle` | `get_beam_angle()` |
+| `7` | `put_BeamAngle` | `put_beam_angle()` |
+| `8` | `get_BeamAngleConfidence` | `get_beam_angle_confidence()` |
+| `9` | `OpenInputStream` | — |
+| `10` | `get_RelativeTime` | `get_relative_time()` |
 
 ---
 
 ## 5. Чек-лист проверки качества перед релизом
 
-1. [X] **Статический анализ типов**: `mypy --strict kinect_next`
-2. [X] **Синтаксический контроль**: `ruff check kinect_next`
-3. [X] **Аппаратные тесты**:
+1. [X] **Статический анализ типов**: `mypy kinect_next` (strict задан в `pyproject.toml`)
+2. [X] **Синтаксический контроль**: `ruff check kinect_next tests` и `ruff format --check kinect_next tests`
+3. [X] **Тесты без железа**: `pytest` (фейки нативного слоя + настоящая in-process VTable)
+4. [X] **Тесты на сенсоре**: `pytest --run-hardware`
+5. [X] **Скрипты ручной проверки** (`examples/hardware_probes/`):
     * `test_step1.py` (геометрия и флаги)
     * `test_step2.py` (Win32 DLL и CoordinateMapper)
     * `test_step3.py` (модели кадров и суставов)
     * `test_step4_live.py` (MultiSource видеопотоки + Point Cloud)
-    * `test_step5_vtable_scanner.py` (VTable-контроль аудиоподсистемы)
-    * `test_step6_audio_models.py` (аудио-метрики и WAV экспорт)
-    * `test_step7_audio_live.py` (живая запись 16kHz звука и трекинг луча)
-    * `test_step8_audio_skeleton_fusion.py` (детекция говорящего в OpenCV)
-4. [X] **Версионирование**:
-    * Обновить `version` в `pyproject.toml` (1.1.0).
-    * Обновить `__version__` в `kinect_next/__init__.py` (1.1.0).
-5. [ ] **Сборка дистрибутива**:
+    * `test_step5.py` (нативный COM-слой аудио; `test_step5_deb.py` — исторический сканер VTable, раскладку проверяет `tests/test_vtable_layout.py`)
+    * `test_step6.py` (аудио-метрики и WAV экспорт)
+    * `test_step7.py` (живая запись 16kHz звука и трекинг луча)
+    * `test_step8.py` (детекция говорящего в OpenCV)
+6. [X] **Версионирование**:
+    * Обновить `__version__` в `kinect_next/__init__.py` — `pyproject.toml` берёт версию оттуда.
+    * Перенести раздел `[Unreleased]` в `CHANGELOG.md` под новый номер версии.
+7. [ ] **Сборка дистрибутива**:
     ```bash
     python -m build
     ```

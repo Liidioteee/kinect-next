@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ dynamic = ["version"]
 description = "Modern, high-performance, strictly-typed Python library for Microsoft Kinect v2 (audio & video)"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "Liidioteee", email = "sofronovdenis2009@gmail.com" },
 ]
@@ -33,7 +34,6 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -54,11 +54,12 @@ dependencies = [
 [project.optional-dependencies]
 viz = [
     "opencv-python>=4.6.0",
+]
+open3d = [
     "open3d>=0.17.0",
 ]
 all = [
-    "opencv-python>=4.6.0",
-    "open3d>=0.17.0",
+    "kinect-next[viz,open3d]",
 ]
 dev = [
     "pytest>=7.4",
