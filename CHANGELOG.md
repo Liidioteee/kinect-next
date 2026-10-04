@@ -76,7 +76,7 @@ sensor. It contains breaking API changes (see **Changed** / **Removed**).
 - `import kinect_next` works on non-Windows platforms (opening a sensor raises
   `KinectNotAvailableError`).
 - `open3d` and `all` extras; `viz` now only pulls in OpenCV.
-- Test suite grown from 45 to 455 hardware-free tests (100 % line coverage) and
+- Test suite grown from 45 to 458 hardware-free tests (100 % line coverage) and
   from 15 to 27 hardware tests, including a snapshot of the SDK header's VTable
   layouts (`tests/data/kinect_vtables.json`).
 

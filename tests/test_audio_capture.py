@@ -446,3 +446,20 @@ def test_lost_count_without_audio_is_zero(make_sensor: SensorFactory) -> None:
     assert sensor.audio_subframes_lost == 0
     sensor.close()
     assert sensor.audio_subframes_lost == 0
+
+
+def test_a_cancelled_wait_leaves_queued_audio_for_the_next_reader(
+    native: FakeSensorNative, make_sensor: SensorFactory
+) -> None:
+    """Regression: audio that arrived together with a cancellation was taken by
+    the abandoned wait and thrown away, leaving a gap for the real consumer."""
+    sensor = make_sensor(StreamType.AUDIO)
+    _deliver(native, sensor, *_subframes(0, 2))
+
+    cancel = CancelToken()
+    cancel.cancelled = True
+    with pytest.raises(WaitCancelledError):
+        sensor._wait_for_audio_frame(1000, cancel)
+
+    frame = sensor.wait_for_audio_frame(1000)
+    assert [sf.relative_time_ns // (_TICK * 100) for sf in frame.subframes] == [0, 1]

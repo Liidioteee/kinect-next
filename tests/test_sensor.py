@@ -601,3 +601,48 @@ def test_a_reader_torn_down_mid_wait_reads_as_closed(make_sensor: SensorFactory)
             sensor.wait_for_frames(50)
     finally:
         sensor._reader = reader
+
+
+def test_a_wait_cancelled_as_a_frame_arrives_leaves_the_frame(
+    native: FakeSensorNative, make_sensor: SensorFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: when a frame and a cancellation are signalled together the
+    Win32 wait reports the frame; the abandoned wait must not consume it."""
+    sensor = make_sensor()
+    cancel = CancelToken()
+    real_wait = sensor_mod.wait_for_multiple_objects
+
+    def cancelled_during_wait(handles: object, wait_all: bool = False, timeout_ms: int = 0) -> int:
+        result = real_wait(handles, wait_all, timeout_ms)  # type: ignore[arg-type]
+        cancel.cancelled = True  # the awaiting task was cancelled while we were blocked
+        return result
+
+    native.video.push(make_multi_frame(7))
+    monkeypatch.setattr(sensor_mod, "wait_for_multiple_objects", cancelled_during_wait)
+    with pytest.raises(WaitCancelledError):
+        sensor._wait_for_frames(1000, cancel)
+    monkeypatch.undo()
+
+    fs = sensor.wait_for_frames(1000)
+    assert fs.depth is not None and (fs.depth.data == 1007).all()
+
+
+def test_a_wait_closed_as_a_frame_arrives_reports_closed(
+    native: FakeSensorNative, make_sensor: SensorFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sensor = make_sensor()
+    real_wait = sensor_mod.wait_for_multiple_objects
+
+    def closing_during_wait(handles: object, wait_all: bool = False, timeout_ms: int = 0) -> int:
+        result = real_wait(handles, wait_all, timeout_ms)  # type: ignore[arg-type]
+        sensor._closing = True
+        return result
+
+    frame = native.video.push(make_multi_frame(1))
+    monkeypatch.setattr(sensor_mod, "wait_for_multiple_objects", closing_during_wait)
+    try:
+        with pytest.raises(KinectClosedError):
+            sensor.wait_for_frames(1000)
+    finally:
+        sensor._closing = False
+    assert not frame.released, "the frame must not have been acquired"

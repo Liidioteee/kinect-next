@@ -222,14 +222,16 @@ class AudioPump:
         """
         with self._cond:
             while True:
+                # Cancellation comes first: an abandoned wait must never walk off
+                # with audio that a live consumer is about to ask for.
+                if cancel is not None and cancel.cancelled:
+                    raise WaitCancelledError("The wait for audio was cancelled.")
                 if self._queue:
                     return self._take()
                 if self._closed:
                     raise KinectClosedError("The sensor was closed while waiting for audio.")
                 if self._error is not None:
                     raise AudioStreamError("The audio capture thread stopped.") from self._error
-                if cancel is not None and cancel.cancelled:
-                    raise WaitCancelledError("The wait for audio was cancelled.")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise KinectTimeoutError(f"Timed out waiting for an audio frame ({timeout_ms} ms).")

@@ -497,6 +497,10 @@ class KinectSensor:
             if result != WAIT_OBJECT_0:
                 raise KinectError(f"Win32 wait on the frame event failed (code {result}).")
 
+            # A frame and a cancellation / close can be signalled together, and the
+            # wait reports the frame first. An abandoned wait must not consume it.
+            self._check(cancel)
+
             # Fetching the event data is what re-arms the handle; without it the
             # next wait would return immediately instead of blocking.
             reader.clear_frame_arrived(handle)
